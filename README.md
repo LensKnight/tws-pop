@@ -1,4 +1,11 @@
 <div align="center">
+  <img src="app_icon.png" width="140" alt="TWS POP Logo">
+
+  <h1>TWS POP</h1>
+  <p><strong>Smart Earbud Popups for Android</strong></p>
+</div>
+
+<div align="center">
   <h1>TWS POP</h1>
   <p><strong>Smart Earbud Popups for Android</strong></p>
   <p>A device-aware popup experience for headphones and earbuds.</p>
