@@ -10,7 +10,7 @@
 </div>
 
 <div align="center">
-  <h1>TWS POP</h1>
+  <h1>TWS PoP</h1>
   <p><strong>Smart Earbud Popups for Android</strong></p>
   <p>A device-aware popup experience for headphones and earbuds.</p>
 
@@ -23,17 +23,17 @@
 ---
 
 
-# TWS POP
+# TWS PoP
 
 **A device-aware popup experience for headphones and earbuds on Android.**
 
-TWS POP is an Android application designed to provide a personalized popup experience when supported headphones and earbuds connect. It combines device-specific artwork, floating animations, and custom video playback.
+TWS PoP is an Android application designed to provide a personalized popup experience when supported headphones and earbuds connect. It combines device-specific artwork, floating animations, and custom video playback.
 
 ---
 
 ## Overview
 
-TWS POP makes connecting headphones and earbuds more personalized through dedicated visuals and device-specific popup experiences.
+TWS PoP makes connecting headphones and earbuds more personalized through dedicated visuals and device-specific popup experiences.
 
 ## Features
 
