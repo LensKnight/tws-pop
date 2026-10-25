@@ -1,3 +1,17 @@
+<div align="center">
+  <h1>TWS POP</h1>
+  <p><strong>Smart Earbud Popups for Android</strong></p>
+  <p>A device-aware popup experience for headphones and earbuds.</p>
+
+  ![Flutter](https://img.shields.io/badge/Flutter-Framework-02569B?logo=flutter&logoColor=white)
+  ![Android](https://img.shields.io/badge/Platform-Android-3DDC84?logo=android&logoColor=white)
+  ![License](https://img.shields.io/badge/License-MIT-white)
+  [![Latest Release](https://img.shields.io/github/v/release/LensKnight/tws-pop)](https://github.com/LensKnight/tws-pop/releases)
+</div>
+
+---
+
+
 # TWS POP
 
 **A device-aware popup experience for headphones and earbuds on Android.**
