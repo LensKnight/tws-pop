@@ -1,3 +1,8 @@
+<p align="center">
+  <img src="assets/banner.png"
+       alt="TWS POP Banner"
+       width="100%">
+</p>
 <div align="center">
   <img src="assets/app_icon.png" width="140" alt="TWS POP Logo">
 
