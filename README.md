@@ -115,7 +115,9 @@ When reporting an issue, include:
 
 ## License
 
-No open-source license has been specified for this project yet. All rights remain with their respective rights holders unless a license is added.
+TWS POP is licensed under the [MIT License](LICENSE).
+
+You are free to use, copy, modify, merge, publish, distribute, sublicense, and sell copies of the software, subject to the license terms.
 
 ---
 
