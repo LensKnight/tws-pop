@@ -5,6 +5,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:http/http.dart' as http;
+
 const overlayChannel = MethodChannel('tws_pop/overlay');
 const eqChannel = MethodChannel('tws_pop/eq');
 
@@ -18,8 +20,49 @@ const border = Color(0xFFDADCE0);
 const success = Color(0xFF1A73E8);
 const danger = Color(0xFF174EA6);
 
+/// Address of the "latest release" of the GitHub repo that hosts your APK.
+/// Replace YOUR_GITHUB_USERNAME and YOUR_REPO_NAME. The repo must be public.
+const kUpdateUrl =
+    'https://api.github.com/repos/LensKnight/tws-pop/releases/latest';
+
 void main() {
   runApp(const TwsPopApp());
+}
+
+/// App version name (for example 1.0.1), read natively. Empty if unknown.
+Future<String> appVersionName() async {
+  try {
+    return await overlayChannel.invokeMethod<String>('getAppVersion') ?? '';
+  } on MissingPluginException {
+    return '';
+  } on PlatformException {
+    return '';
+  }
+}
+
+/// Opens a link in the phone's browser, handled natively.
+Future<bool> openExternalUrl(String url) async {
+  try {
+    return await overlayChannel.invokeMethod<bool>('openUrl', {'url': url}) ??
+        false;
+  } on MissingPluginException {
+    return false;
+  } on PlatformException {
+    return false;
+  }
+}
+
+void showToast(BuildContext context, String message) {
+  ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(
+      SnackBar(
+        content: Text(message, style: const TextStyle(color: Colors.white)),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: Colors.black87,
+        duration: const Duration(seconds: 2),
+      ),
+    );
 }
 
 // -----------------------------------------------------------------------------
@@ -159,6 +202,257 @@ class EqState {
 }
 
 // -----------------------------------------------------------------------------
+// App updates
+// -----------------------------------------------------------------------------
+
+enum UpdateStatus { upToDate, available, error, notConfigured }
+
+class UpdateInfo {
+  const UpdateInfo({
+    required this.version,
+    required this.notes,
+    required this.pageUrl,
+    this.downloadUrl,
+  });
+
+  final String version;
+  final String notes;
+  final String pageUrl;
+  final String? downloadUrl;
+}
+
+class UpdateResult {
+  const UpdateResult(this.status, {this.info, this.currentVersion = ''});
+
+  final UpdateStatus status;
+  final UpdateInfo? info;
+  final String currentVersion;
+}
+
+class UpdateChecker {
+  static bool get configured => !kUpdateUrl.contains('YOUR_');
+
+  static List<int> _parts(String version) {
+    final cleaned = version
+        .trim()
+        .replaceFirst(RegExp(r'^[vV]'), '')
+        .split('+')
+        .first
+        .split('-')
+        .first;
+
+    return cleaned
+        .split('.')
+        .map((p) => int.tryParse(p.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0)
+        .toList();
+  }
+
+  /// True when [remote] is a higher version than [local] (1.10.0 > 1.9.0).
+  static bool isNewer(String remote, String local) {
+    final a = _parts(remote);
+    final b = _parts(local);
+    final length = math.max(a.length, b.length);
+
+    for (var i = 0; i < length; i++) {
+      final x = i < a.length ? a[i] : 0;
+      final y = i < b.length ? b[i] : 0;
+      if (x != y) return x > y;
+    }
+    return false;
+  }
+
+  static Future<UpdateResult> check() async {
+    if (!configured) return const UpdateResult(UpdateStatus.notConfigured);
+
+    var current = '';
+
+    try {
+      current = await appVersionName();
+      if (current.isEmpty) {
+        return UpdateResult(UpdateStatus.error, currentVersion: current);
+      }
+
+      final response = await http
+          .get(
+            Uri.parse(kUpdateUrl),
+            headers: {'Accept': 'application/vnd.github+json'},
+          )
+          .timeout(const Duration(seconds: 12));
+
+      if (response.statusCode != 200) {
+        return UpdateResult(UpdateStatus.error, currentVersion: current);
+      }
+
+      final json = jsonDecode(response.body);
+      if (json is! Map) {
+        return UpdateResult(UpdateStatus.error, currentVersion: current);
+      }
+
+      // Works with a GitHub release, or with your own small JSON file that
+      // has "version", "url", "download_url" and "notes".
+      final version = (json['tag_name'] ?? json['version'])?.toString().trim();
+      if (version == null || version.isEmpty) {
+        return UpdateResult(UpdateStatus.error, currentVersion: current);
+      }
+
+      if (!isNewer(version, current)) {
+        return UpdateResult(UpdateStatus.upToDate, currentVersion: current);
+      }
+
+      String? download;
+      final assets = json['assets'];
+      if (assets is List) {
+        for (final asset in assets) {
+          if (asset is! Map) continue;
+
+          final name = asset['name']?.toString().toLowerCase() ?? '';
+          final url = asset['browser_download_url']?.toString();
+
+          if (url != null && name.endsWith('.apk')) {
+            download = url;
+            break;
+          }
+        }
+      }
+      download ??= json['download_url']?.toString();
+
+      final page = (json['html_url'] ?? json['url'])?.toString() ?? '';
+      if (download == null && page.isEmpty) {
+        return UpdateResult(UpdateStatus.error, currentVersion: current);
+      }
+
+      return UpdateResult(
+        UpdateStatus.available,
+        currentVersion: current,
+        info: UpdateInfo(
+          version: version,
+          notes: (json['body'] ?? json['notes'])?.toString().trim() ?? '',
+          pageUrl: page,
+          downloadUrl: download,
+        ),
+      );
+    } catch (_) {
+      // No internet, timeout, or unexpected data.
+      return UpdateResult(UpdateStatus.error, currentVersion: current);
+    }
+  }
+}
+
+Future<void> showUpdateDialog(
+  BuildContext context,
+  UpdateResult result, {
+  bool allowSkip = false,
+}) async {
+  final info = result.info;
+  if (info == null) return;
+
+  final notes = info.notes.length > 500
+      ? '${info.notes.substring(0, 500)}...'
+      : info.notes;
+
+  final action = await showDialog<String>(
+    context: context,
+    builder: (dialogContext) {
+      return AlertDialog(
+        backgroundColor: panel,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(Icons.system_update_rounded, color: accent),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Update available',
+                style: TextStyle(
+                  color: Colors.black87,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Version ${info.version} is ready. You have '
+                '${result.currentVersion}.',
+                style: const TextStyle(color: muted, fontSize: 13, height: 1.5),
+              ),
+              if (notes.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                Container(
+                  width: double.infinity,
+                  constraints: const BoxConstraints(maxHeight: 160),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: panelLight,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: SingleChildScrollView(
+                    child: Text(
+                      notes,
+                      style: const TextStyle(
+                        color: Colors.black87,
+                        fontSize: 12,
+                        height: 1.5,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          if (allowSkip)
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, 'skip'),
+              child: const Text('SKIP', style: TextStyle(color: muted)),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, 'later'),
+            child: const Text('LATER', style: TextStyle(color: muted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, 'update'),
+            child: const Text(
+              'UPDATE',
+              style: TextStyle(color: accent, fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      );
+    },
+  );
+
+  if (action == 'skip') {
+    await PrefsStore.update({'skippedVersion': info.version});
+    return;
+  }
+
+  if (action == 'update') {
+    final target = info.downloadUrl ?? info.pageUrl;
+    final opened = await openExternalUrl(target);
+
+    if (!opened && context.mounted) {
+      showToast(context, 'Could not open the download link');
+    }
+  }
+}
+
+// -----------------------------------------------------------------------------
 // App shell: loading screen -> welcome (name) -> home
 // -----------------------------------------------------------------------------
 
@@ -213,9 +507,46 @@ class _AppRootState extends State<AppRoot> {
     if (!mounted) return;
 
     final name = PrefsStore.data['userName']?.toString().trim();
+    final goHome = name != null && name.isNotEmpty;
+
     setState(() {
-      stage = (name == null || name.isEmpty) ? AppStage.welcome : AppStage.home;
+      stage = goHome ? AppStage.home : AppStage.welcome;
     });
+
+    // New users just installed the latest version, so only check for
+    // returning users.
+    if (goHome) _checkForUpdate();
+  }
+
+  /// Quiet check at most once every 12 hours. Only speaks up when a newer
+  /// version exists and the user has not skipped it.
+  Future<void> _checkForUpdate() async {
+    if (!UpdateChecker.configured) return;
+
+    final last = (PrefsStore.data['lastUpdateCheck'] as num?)?.toInt() ?? 0;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - last < const Duration(hours: 12).inMilliseconds) return;
+
+    // Let the home screen finish its entrance first.
+    await Future<void>.delayed(const Duration(milliseconds: 1200));
+
+    final result = await UpdateChecker.check();
+
+    // On errors, try again at the next launch.
+    if (result.status == UpdateStatus.error ||
+        result.status == UpdateStatus.notConfigured) {
+      return;
+    }
+
+    await PrefsStore.update({'lastUpdateCheck': now});
+
+    final info = result.info;
+    if (!mounted || result.status != UpdateStatus.available || info == null) {
+      return;
+    }
+    if (PrefsStore.data['skippedVersion'] == info.version) return;
+
+    await showUpdateDialog(context, result, allowSkip: true);
   }
 
   Future<void> _saveName(String name) async {
@@ -571,7 +902,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                         ),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(18),
-                          borderSide: BorderSide(color: border),
+                          borderSide: const BorderSide(color: border),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(18),
@@ -758,6 +1089,10 @@ class _HomeScreenState extends State<HomeScreen>
   // Equalizer
   EqState? eq;
 
+  // App version and updates
+  String appVersion = '';
+  bool checkingUpdate = false;
+
   @override
   void initState() {
     super.initState();
@@ -777,6 +1112,7 @@ class _HomeScreenState extends State<HomeScreen>
     _refreshPermission();
     _initNative();
     _loadEq();
+    _loadVersion();
   }
 
   @override
@@ -938,6 +1274,47 @@ class _HomeScreenState extends State<HomeScreen>
     setState(() => userName = result);
     after?.call();
     await PrefsStore.update({'userName': result});
+  }
+
+  // ---------------------------------------------------------------------------
+  // Updates
+  // ---------------------------------------------------------------------------
+
+  Future<void> _loadVersion() async {
+    final version = await appVersionName();
+    if (!mounted) return;
+    setState(() => appVersion = version);
+  }
+
+  Future<void> _manualUpdateCheck([VoidCallback? after]) async {
+    if (checkingUpdate) return;
+
+    setState(() => checkingUpdate = true);
+    after?.call();
+
+    final result = await UpdateChecker.check();
+
+    if (!mounted) return;
+    setState(() => checkingUpdate = false);
+    after?.call();
+
+    switch (result.status) {
+      case UpdateStatus.available:
+        await PrefsStore.update({
+          'lastUpdateCheck': DateTime.now().millisecondsSinceEpoch,
+        });
+        if (!mounted) return;
+        await showUpdateDialog(context, result);
+      case UpdateStatus.upToDate:
+        await PrefsStore.update({
+          'lastUpdateCheck': DateTime.now().millisecondsSinceEpoch,
+        });
+        _toast('You are up to date (v${result.currentVersion})');
+      case UpdateStatus.notConfigured:
+        _toast('Update source is not set yet');
+      case UpdateStatus.error:
+        _toast('Could not check for updates. Check your internet.');
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1405,16 +1782,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _toast(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message, style: const TextStyle(color: Colors.white)),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: Colors.black87,
-          duration: const Duration(seconds: 2),
-        ),
-      );
+    showToast(context, message);
   }
 
   Future<void> _loadInitialDevice() async {
@@ -1946,14 +2314,116 @@ class _HomeScreenState extends State<HomeScreen>
     final name = deviceName.toLowerCase();
 
     if (name.contains('airdopes 219') || name.contains('airdopes219')) {
-      return 'assets/images/airdopes219.jpg';
+      return 'assets/images/airdopes219.png';
     }
 
-    if (name.contains('oneplus nord buds') || name.contains('nord buds')) {
-      return 'assets/images/oneplus_nord_buds.png';
+    if (name.contains('airdopes 131') || name.contains('airdopes131')) {
+      return 'assets/images/airdopes131.png';
     }
 
-    return 'assets/images/sony_headphones.png';
+    if (name.contains('oneplus nord buds 2r') ||
+        name.contains('nord buds 2r')) {
+      return 'assets/images/oneplus_nord_buds_2r.png';
+    }
+
+    // Sony WH-CH720N shows up as "WH-CH720N", so match that spelling too.
+    if (name.contains('wh-ch720n') ||
+        name.contains('wh720n') ||
+        name.contains('wh-720n')) {
+      return 'assets/images/sony_heaphones.png';
+    }
+
+    if (name.contains('stone 193 pro') || name.contains('stone193pro')) {
+      return 'assets/images/stone_193_pro.png';
+    }
+
+    // Generic boAt brand detection
+    if (name.contains('boat') ||
+        name.contains('airdopes') ||
+        name.contains('stone ') ||
+        name.contains('stone-') ||
+        name.contains('nirvana') ||
+        name.contains('immortal') ||
+        name.contains('rockerz') ||
+        name.contains('bassheads')) {
+      return 'assets/images/boat_logo.png';
+    }
+
+    // OnePlus
+    if (name.contains('oneplus') ||
+        name.contains('one plus') ||
+        name.contains('nord buds')) {
+      return 'assets/images/oneplus_logo.png';
+    }
+
+    // Noise
+    if (name.contains('noise') ||
+        name.contains('buds vs') ||
+        name.contains('air buds')) {
+      return 'assets/images/noise_logo.png';
+    }
+
+    // Hammer
+    if (name.contains('hammer')) {
+      return 'assets/images/hammer_logo.png';
+    }
+
+    // Apple
+    if (name.contains('airpods') ||
+        name.contains('airpods pro') ||
+        name.contains('airpods max') ||
+        name.contains('apple')) {
+      return 'assets/images/apple_logo.png';
+    }
+
+    // Nothing
+    if (name.contains('nothing') || name.contains('cmf')) {
+      return 'assets/images/nothing_logo.png';
+    }
+
+    // JBL
+    if (name.contains('jbl')) {
+      return 'assets/images/jbl_logo.png';
+    }
+
+    // Realme
+    if (name.contains('realme')) {
+      return 'assets/images/realme_logo.png';
+    }
+
+    // Redmi / Xiaomi / Poco
+    if (name.contains('redmi') ||
+        name.contains('xiaomi') ||
+        name.contains('poco')) {
+      return 'assets/images/xiaomi_logo.png';
+    }
+
+    // Samsung
+    if (name.contains('samsung') || name.contains('galaxy buds')) {
+      return 'assets/images/samsung_logo.png';
+    }
+
+    // Oppo
+    if (name.contains('oppo') || name.contains('enco')) {
+      return 'assets/images/oppo_logo.png';
+    }
+
+    // Vivo
+    if (name.contains('vivo') || name.contains('tws air')) {
+      return 'assets/images/vivo_logo.png';
+    }
+
+    // Boult
+    if (name.contains('boult')) {
+      return 'assets/images/boult_logo.png';
+    }
+
+    // Zebronics
+    if (name.contains('zebronics') || name.contains('zeb')) {
+      return 'assets/images/zebronics_logo.png';
+    }
+
+    return 'assets/images/default_earbuds.png';
   }
 
   String _formatTime(DateTime t) {
@@ -2170,7 +2640,7 @@ class _HomeScreenState extends State<HomeScreen>
                       ),
                       subtitle: const Text(
                         'Detect earbuds and show the popup even when the app '
-                        'closed',
+                        'is closed',
                       ),
                       value: watcherEnabled,
                       onChanged: (v) =>
@@ -2309,7 +2779,29 @@ class _HomeScreenState extends State<HomeScreen>
                         ),
                       ),
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 26),
+                    const Text(
+                      'ABOUT',
+                      style: TextStyle(
+                        color: muted,
+                        fontSize: 10,
+                        letterSpacing: 2,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    _settingsRow(
+                      icon: Icons.system_update_rounded,
+                      title: 'Check for updates',
+                      subtitle: checkingUpdate
+                          ? 'Checking...'
+                          : appVersion.isEmpty
+                          ? 'Tap to check'
+                          : 'Version $appVersion  ·  tap to check',
+                      onTap: () =>
+                          _manualUpdateCheck(() => setSheetState(() {})),
+                    ),
+                    const SizedBox(height: 24),
                     SizedBox(
                       width: double.infinity,
                       child: FilledButton(

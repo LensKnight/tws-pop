@@ -319,6 +319,31 @@ class MainActivity : FlutterActivity() {
 
                 "isBatteryExempt" -> result.success(isBatteryExempt())
 
+                "getAppVersion" -> {
+                    @Suppress("DEPRECATION")
+                    val version = try {
+                        packageManager.getPackageInfo(packageName, 0).versionName
+                    } catch (_: Exception) {
+                        null
+                    }
+                    result.success(version ?: "")
+                }
+
+                "openUrl" -> {
+                    val url = call.argument<String>("url")
+                    val opened = try {
+                        if (url.isNullOrBlank()) {
+                            false
+                        } else {
+                            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                            true
+                        }
+                    } catch (_: Exception) {
+                        false
+                    }
+                    result.success(opened)
+                }
+
                 "requestBatteryExemption" -> {
                     requestBatteryExemption()
                     result.success(true)

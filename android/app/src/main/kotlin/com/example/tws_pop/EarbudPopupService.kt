@@ -81,7 +81,10 @@ class EarbudPopupService : Service() {
     }
 
     private enum class DeviceType {
-        BOAT,
+        BOAT_AIRDOPES_219,
+        BOAT_AIRDOPES_131,
+        BOAT_STONE_193_PRO,
+        BOAT_GENERIC,
         SONY,
         ONEPLUS,
         DEFAULT
@@ -127,7 +130,13 @@ class EarbudPopupService : Service() {
 
         return when {
             "airdopes 219" in name || "airdopes219" in name ->
-                DeviceType.BOAT
+                DeviceType.BOAT_AIRDOPES_219
+
+            "airdopes 131" in name || "airdopes131" in name ->
+                DeviceType.BOAT_AIRDOPES_131
+            
+            "stone 193 pro" in name || "stone193pro" in name ->
+                DeviceType.BOAT_STONE_193_PRO
 
             "wh-ch720n" in name || "wh720n" in name ->
                 DeviceType.SONY
@@ -135,6 +144,16 @@ class EarbudPopupService : Service() {
             "oneplus nord buds" in name ||
             "nord buds 2r" in name ->
                 DeviceType.ONEPLUS
+
+            "boat" in name ||
+            "airdopes" in name ||
+            "stone " in name ||
+            "stone-" in name ||
+            "nirvana" in name ||
+            "immortal" in name ||
+            "rockerz" in name ||
+            "bassheads" in name ->
+                DeviceType.BOAT_GENERIC
 
             else -> DeviceType.DEFAULT
         }
@@ -145,7 +164,10 @@ class EarbudPopupService : Service() {
         val theme = themeFor(styleName)
         val deviceType = detectDeviceType(deviceName)
         val subtitleText = when (deviceType) {
-            DeviceType.BOAT -> "Your music. Your vibe."
+            DeviceType.BOAT_AIRDOPES_219 -> "Your music. Your vibe."
+            DeviceType.BOAT_AIRDOPES_131 -> "Your music. Your vibe."            
+            DeviceType.BOAT_STONE_193_PRO -> "Your music. Your vibe."
+            DeviceType.BOAT_GENERIC -> "Your music. Your vibe."
             DeviceType.SONY -> "Premium sound. Pure silence."
             DeviceType.ONEPLUS -> "Smooth sound. Seamless vibes."
             DeviceType.DEFAULT -> "Connected. Ready to play."
@@ -354,9 +376,11 @@ class EarbudPopupService : Service() {
 
             if (!theme.compact) {
                 when (deviceType) {
-                    DeviceType.BOAT,
+                    DeviceType.BOAT_GENERIC,
+                    DeviceType.BOAT_AIRDOPES_219,
+                    DeviceType.BOAT_AIRDOPES_131,
                     DeviceType.ONEPLUS -> playVideo(video, deviceType)
-
+                    DeviceType.BOAT_STONE_193_PRO,
                     DeviceType.SONY,
                     DeviceType.DEFAULT -> {
                         videoContainer.removeView(video)
@@ -388,7 +412,10 @@ class EarbudPopupService : Service() {
             DeviceType.SONY -> R.drawable.sony_headphones
             DeviceType.DEFAULT -> R.drawable.default_earbuds
             DeviceType.ONEPLUS -> R.drawable.oneplus_nord_buds_2r
-            DeviceType.BOAT -> return
+            DeviceType.BOAT_GENERIC -> R.drawable.boat_logo
+            DeviceType.BOAT_STONE_193_PRO -> R.drawable.stone_193_pro
+            DeviceType.BOAT_AIRDOPES_131 -> R.drawable.airdopes131
+            DeviceType.BOAT_AIRDOPES_219 -> return
         }
 
         val image = ImageView(this).apply {
@@ -441,9 +468,13 @@ class EarbudPopupService : Service() {
     private fun playVideo(video: VideoView, deviceType: DeviceType) {
         try {
             val videoName = when (deviceType) {
-                DeviceType.BOAT -> "opening.mp4"
+                DeviceType.BOAT_AIRDOPES_219 -> "opening.mp4"
                 DeviceType.ONEPLUS -> "oneplus_nord_buds.mp4"
-                DeviceType.SONY, DeviceType.DEFAULT -> null
+                DeviceType.SONY,
+                DeviceType.DEFAULT,
+                DeviceType.BOAT_STONE_193_PRO,
+                DeviceType.BOAT_AIRDOPES_131,
+                DeviceType.BOAT_GENERIC -> null
             }
 
             // Sony ke liye video nahi hai
