@@ -10,22 +10,73 @@ import 'package:http/http.dart' as http;
 const overlayChannel = MethodChannel('tws_pop/overlay');
 const eqChannel = MethodChannel('tws_pop/eq');
 
-const bg = Color(0xFFF8F9FA);
-const panel = Color(0xFFFFFFFF);
-const panelLight = Color(0xFFF1F3F5);
+/// Brand seed colour. Material 3 builds the whole light/dark palette from it.
 const accent = Color(0xFF1A73E8);
-const violet = Color(0xFF4285F4); // Kept as a blue shade per color constraints
-const muted = Color(0xFF5F6368);
-const border = Color(0xFFDADCE0);
-const success = Color(0xFF1A73E8);
-const danger = Color(0xFF174EA6);
+
+// The popup is always light, so its previews use fixed light colours.
+const _popupSurface = Color(0xFFF1F3F5);
+const _popupBorder = Color(0xFFDADCE0);
+const _popupTonal = Color(0xFFD3E3FD);
 
 /// Address of the "latest release" of the GitHub repo that hosts your APK.
-/// Replace YOUR_GITHUB_USERNAME and YOUR_REPO_NAME. The repo must be public.
 const kUpdateUrl =
     'https://api.github.com/repos/LensKnight/tws-pop/releases/latest';
 
-void main() {
+/// App theme mode (system / light / dark).
+final ValueNotifier<ThemeMode> themeModeNotifier = ValueNotifier(
+  ThemeMode.system,
+);
+
+ThemeMode _themeModeFromName(String? name) {
+  switch (name) {
+    case 'light':
+      return ThemeMode.light;
+    case 'dark':
+      return ThemeMode.dark;
+    default:
+      return ThemeMode.system;
+  }
+}
+
+ThemeData buildTheme(Brightness brightness) {
+  final scheme = ColorScheme.fromSeed(
+    seedColor: accent,
+    brightness: brightness,
+  );
+
+  return ThemeData(
+    useMaterial3: true,
+    colorScheme: scheme,
+    scaffoldBackgroundColor: scheme.surface,
+    fontFamily: 'Roboto',
+    snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
+    bottomSheetTheme: BottomSheetThemeData(
+      backgroundColor: scheme.surfaceContainerLow,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+    ),
+    listTileTheme: const ListTileThemeData(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(16)),
+      ),
+    ),
+  );
+}
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+
+  await PrefsStore.load();
+  themeModeNotifier.value = _themeModeFromName(
+    PrefsStore.data['themeMode']?.toString(),
+  );
+
   runApp(const TwsPopApp());
 }
 
@@ -56,12 +107,7 @@ void showToast(BuildContext context, String message) {
   ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
     ..showSnackBar(
-      SnackBar(
-        content: Text(message, style: const TextStyle(color: Colors.white)),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: Colors.black87,
-        duration: const Duration(seconds: 2),
-      ),
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
     );
 }
 
@@ -118,10 +164,11 @@ class PopupStyle {
   final String label;
 }
 
+/// All popup styles are light. The native popup must ignore the app theme.
 const popupStyles = [
   PopupStyle('classic', 'Classic'),
-  PopupStyle('midnight', 'Midnight'),
-  PopupStyle('glow', 'Glow'),
+  PopupStyle('tonal', 'Tonal'),
+  PopupStyle('minimal', 'Minimal'),
   PopupStyle('compact', 'Compact'),
 ];
 
@@ -288,8 +335,6 @@ class UpdateChecker {
         return UpdateResult(UpdateStatus.error, currentVersion: current);
       }
 
-      // Works with a GitHub release, or with your own small JSON file that
-      // has "version", "url", "download_url" and "notes".
       final version = (json['tag_name'] ?? json['version'])?.toString().trim();
       if (version == null || version.isEmpty) {
         return UpdateResult(UpdateStatus.error, currentVersion: current);
@@ -332,7 +377,6 @@ class UpdateChecker {
         ),
       );
     } catch (_) {
-      // No internet, timeout, or unexpected data.
       return UpdateResult(UpdateStatus.error, currentVersion: current);
     }
   }
@@ -353,33 +397,12 @@ Future<void> showUpdateDialog(
   final action = await showDialog<String>(
     context: context,
     builder: (dialogContext) {
+      final cs = Theme.of(dialogContext).colorScheme;
+      final tt = Theme.of(dialogContext).textTheme;
+
       return AlertDialog(
-        backgroundColor: panel,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: Row(
-          children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: accent.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: const Icon(Icons.system_update_rounded, color: accent),
-            ),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'Update available',
-                style: TextStyle(
-                  color: Colors.black87,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ],
-        ),
+        icon: const Icon(Icons.system_update_rounded),
+        title: const Text('Update available'),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -388,7 +411,7 @@ Future<void> showUpdateDialog(
               Text(
                 'Version ${info.version} is ready. You have '
                 '${result.currentVersion}.',
-                style: const TextStyle(color: muted, fontSize: 13, height: 1.5),
+                style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
               ),
               if (notes.isNotEmpty) ...[
                 const SizedBox(height: 14),
@@ -397,18 +420,11 @@ Future<void> showUpdateDialog(
                   constraints: const BoxConstraints(maxHeight: 160),
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: panelLight,
-                    borderRadius: BorderRadius.circular(14),
+                    color: cs.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(16),
                   ),
                   child: SingleChildScrollView(
-                    child: Text(
-                      notes,
-                      style: const TextStyle(
-                        color: Colors.black87,
-                        fontSize: 12,
-                        height: 1.5,
-                      ),
-                    ),
+                    child: Text(notes, style: tt.bodySmall),
                   ),
                 ),
               ],
@@ -419,18 +435,15 @@ Future<void> showUpdateDialog(
           if (allowSkip)
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, 'skip'),
-              child: const Text('SKIP', style: TextStyle(color: muted)),
+              child: const Text('Skip'),
             ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, 'later'),
-            child: const Text('LATER', style: TextStyle(color: muted)),
+            child: const Text('Later'),
           ),
-          TextButton(
+          FilledButton(
             onPressed: () => Navigator.pop(dialogContext, 'update'),
-            child: const Text(
-              'UPDATE',
-              style: TextStyle(color: accent, fontWeight: FontWeight.w800),
-            ),
+            child: const Text('Update'),
           ),
         ],
       );
@@ -461,20 +474,33 @@ class TwsPopApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'TWS POP',
-      theme: ThemeData(
-        brightness: Brightness.light,
-        scaffoldBackgroundColor: bg,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: accent,
-          brightness: Brightness.light,
-        ),
-        useMaterial3: true,
-        fontFamily: 'Roboto',
-      ),
-      home: const AppRoot(),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeModeNotifier,
+      builder: (context, mode, _) {
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'TWS POP',
+          themeMode: mode,
+          theme: buildTheme(Brightness.light),
+          darkTheme: buildTheme(Brightness.dark),
+          builder: (context, child) {
+            final dark = Theme.of(context).brightness == Brightness.dark;
+            final icons = dark ? Brightness.light : Brightness.dark;
+
+            return AnnotatedRegion<SystemUiOverlayStyle>(
+              value: SystemUiOverlayStyle(
+                statusBarColor: Colors.transparent,
+                systemNavigationBarColor: Colors.transparent,
+                systemNavigationBarContrastEnforced: false,
+                statusBarIconBrightness: icons,
+                systemNavigationBarIconBrightness: icons,
+              ),
+              child: child ?? const SizedBox.shrink(),
+            );
+          },
+          home: const AppRoot(),
+        );
+      },
     );
   }
 }
@@ -498,10 +524,9 @@ class _AppRootState extends State<AppRoot> {
   }
 
   Future<void> _boot() async {
-    // Show the loading screen for a moment while saved data loads.
     await Future.wait<void>([
       PrefsStore.load(),
-      Future<void>.delayed(const Duration(milliseconds: 2600)),
+      Future<void>.delayed(const Duration(milliseconds: 2200)),
     ]);
 
     if (!mounted) return;
@@ -513,13 +538,10 @@ class _AppRootState extends State<AppRoot> {
       stage = goHome ? AppStage.home : AppStage.welcome;
     });
 
-    // New users just installed the latest version, so only check for
-    // returning users.
     if (goHome) _checkForUpdate();
   }
 
-  /// Quiet check at most once every 12 hours. Only speaks up when a newer
-  /// version exists and the user has not skipped it.
+  /// Quiet check at most once every 12 hours.
   Future<void> _checkForUpdate() async {
     if (!UpdateChecker.configured) return;
 
@@ -527,12 +549,10 @@ class _AppRootState extends State<AppRoot> {
     final now = DateTime.now().millisecondsSinceEpoch;
     if (now - last < const Duration(hours: 12).inMilliseconds) return;
 
-    // Let the home screen finish its entrance first.
     await Future<void>.delayed(const Duration(milliseconds: 1200));
 
     final result = await UpdateChecker.check();
 
-    // On errors, try again at the next launch.
     if (result.status == UpdateStatus.error ||
         result.status == UpdateStatus.notConfigured) {
       return;
@@ -572,30 +592,12 @@ class _AppRootState extends State<AppRoot> {
     }
 
     return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 600),
+      duration: const Duration(milliseconds: 500),
       switchInCurve: Curves.easeOut,
       switchOutCurve: Curves.easeIn,
       child: child,
     );
   }
-}
-
-Widget glowBlob(double size, Color color, double alpha) {
-  return IgnorePointer(
-    child: Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: RadialGradient(
-          colors: [
-            color.withValues(alpha: alpha),
-            color.withValues(alpha: 0),
-          ],
-        ),
-      ),
-    ),
-  );
 }
 
 class LogoMark extends StatelessWidget {
@@ -605,27 +607,18 @@ class LogoMark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(size * 0.31),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [accent, violet],
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: accent.withValues(alpha: 0.25),
-            blurRadius: size * 0.4,
-            spreadRadius: -size * 0.08,
-          ),
-        ],
+        color: cs.primary,
+        borderRadius: BorderRadius.circular(size * 0.3),
       ),
       child: Icon(
         Icons.graphic_eq_rounded,
-        color: Colors.white,
+        color: cs.onPrimary,
         size: size * 0.54,
       ),
     );
@@ -655,6 +648,8 @@ class _SoundBarsState extends State<SoundBars>
 
   @override
   Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.primary;
+
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, _) {
@@ -678,12 +673,8 @@ class _SoundBarsState extends State<SoundBars>
                                         (_controller.value + i * 0.17),
                                   )),
                   decoration: BoxDecoration(
+                    color: color,
                     borderRadius: BorderRadius.circular(3),
-                    gradient: const LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [accent, violet],
-                    ),
                   ),
                 ),
               ),
@@ -699,90 +690,43 @@ class SplashScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+
     return Scaffold(
-      body: Stack(
-        children: [
-          Positioned(
-            top: -140,
-            right: -120,
-            child: glowBlob(380, accent, 0.12),
-          ),
-          Positioned(
-            bottom: -160,
-            left: -140,
-            child: glowBlob(360, violet, 0.08),
-          ),
-          Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TweenAnimationBuilder<double>(
-                  tween: Tween(begin: 0, end: 1),
-                  duration: const Duration(milliseconds: 1000),
-                  curve: Curves.easeOutBack,
-                  builder: (context, t, child) {
-                    return Opacity(
-                      opacity: t.clamp(0.0, 1.0),
-                      child: Transform.scale(
-                        scale: 0.6 + 0.4 * t,
-                        child: child,
-                      ),
-                    );
-                  },
-                  child: const LogoMark(size: 104),
-                ),
-                const SizedBox(height: 30),
-                TweenAnimationBuilder<double>(
-                  tween: Tween(begin: 0, end: 1),
-                  duration: const Duration(milliseconds: 1300),
-                  curve: Curves.easeOut,
-                  builder: (context, t, child) {
-                    return Opacity(
-                      opacity: t.clamp(0.0, 1.0),
-                      child: Transform.translate(
-                        offset: Offset(0, 14 * (1 - t)),
-                        child: child,
-                      ),
-                    );
-                  },
-                  child: const Column(
-                    children: [
-                      Text(
-                        'TWS POP',
-                        style: TextStyle(
-                          fontSize: 28,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 7,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      SizedBox(height: 10),
-                      Text(
-                        'YOUR AUDIO COMPANION',
-                        style: TextStyle(
-                          color: muted,
-                          fontSize: 10,
-                          letterSpacing: 3,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 56),
-                const SizedBox(height: 40, child: SoundBars()),
-                const SizedBox(height: 18),
-                const Text(
-                  'Getting things ready...',
-                  style: TextStyle(
-                    color: muted,
-                    fontSize: 11,
-                    letterSpacing: 1,
-                  ),
-                ),
-              ],
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: 1),
+              duration: const Duration(milliseconds: 900),
+              curve: Curves.easeOutBack,
+              builder: (context, t, child) {
+                return Opacity(
+                  opacity: t.clamp(0.0, 1.0),
+                  child: Transform.scale(scale: 0.6 + 0.4 * t, child: child),
+                );
+              },
+              child: const LogoMark(size: 104),
             ),
-          ),
-        ],
+            const SizedBox(height: 28),
+            Text(
+              'TWS POP',
+              style: tt.headlineMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                letterSpacing: 4,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Your audio companion',
+              style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
+            ),
+            const SizedBox(height: 48),
+            const SizedBox(height: 40, child: SoundBars()),
+          ],
+        ),
       ),
     );
   }
@@ -815,151 +759,74 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
     final name = _controller.text.trim();
 
     return Scaffold(
-      body: Stack(
-        children: [
-          Positioned(
-            top: -140,
-            right: -120,
-            child: glowBlob(380, accent, 0.10),
-          ),
-          Positioned(
-            bottom: -160,
-            left: -140,
-            child: glowBlob(360, violet, 0.06),
-          ),
-          SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 28),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const LogoMark(size: 64),
-                    const SizedBox(height: 32),
-                    ShaderMask(
-                      shaderCallback: (rect) =>
-                          const LinearGradient(colors: [accent, violet])
-                              .createShader(rect),
-                      child: const Text(
-                        'WELCOME',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          letterSpacing: 4,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'What should we\ncall you?',
-                      style: TextStyle(
-                        fontSize: 34,
-                        height: 1.12,
-                        letterSpacing: -1.3,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.black87,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    const Text(
-                      'Your name stays on this device. You can change it '
-                      'anytime in settings.',
-                      style: TextStyle(color: muted, height: 1.5, fontSize: 13),
-                    ),
-                    const SizedBox(height: 28),
-                    TextField(
-                      controller: _controller,
-                      maxLength: 20,
-                      textCapitalization: TextCapitalization.words,
-                      textInputAction: TextInputAction.done,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.black87,
-                      ),
-                      onChanged: (_) => setState(() {}),
-                      onSubmitted: (v) {
-                        if (v.trim().isNotEmpty) _submit(v.trim());
-                      },
-                      decoration: InputDecoration(
-                        counterText: '',
-                        hintText: 'Your name',
-                        hintStyle: const TextStyle(color: muted),
-                        prefixIcon: const Icon(
-                          Icons.person_rounded,
-                          color: accent,
-                        ),
-                        filled: true,
-                        fillColor: panelLight,
-                        contentPadding: const EdgeInsets.symmetric(
-                          vertical: 18,
-                          horizontal: 16,
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(18),
-                          borderSide: const BorderSide(color: border),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(18),
-                          borderSide: const BorderSide(
-                            color: accent,
-                            width: 1.5,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(
-                        onPressed: (name.isEmpty || _saving)
-                            ? null
-                            : () => _submit(name),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: accent,
-                          foregroundColor: Colors.white,
-                          disabledBackgroundColor: panelLight,
-                          padding: const EdgeInsets.symmetric(vertical: 17),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(17),
-                          ),
-                          textStyle: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 1.2,
-                          ),
-                        ),
-                        child: const Text('CONTINUE'),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    SizedBox(
-                      width: double.infinity,
-                      child: TextButton(
-                        onPressed: _saving ? null : () => _submit('Guest'),
-                        style: TextButton.styleFrom(
-                          foregroundColor: muted,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          textStyle: const TextStyle(
-                            fontSize: 12,
-                            letterSpacing: 1.2,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        child: const Text('CONTINUE AS GUEST'),
-                      ),
-                    ),
-                  ],
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const LogoMark(size: 64),
+                const SizedBox(height: 32),
+                Text(
+                  'What should we call you?',
+                  style: tt.headlineLarge?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    height: 1.15,
+                  ),
                 ),
-              ),
+                const SizedBox(height: 10),
+                Text(
+                  'Your name stays on this device. You can change it anytime '
+                  'in settings.',
+                  style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
+                ),
+                const SizedBox(height: 28),
+                TextField(
+                  controller: _controller,
+                  maxLength: 20,
+                  textCapitalization: TextCapitalization.words,
+                  textInputAction: TextInputAction.done,
+                  onChanged: (_) => setState(() {}),
+                  onSubmitted: (v) {
+                    if (v.trim().isNotEmpty) _submit(v.trim());
+                  },
+                  decoration: const InputDecoration(
+                    counterText: '',
+                    labelText: 'Your name',
+                    prefixIcon: Icon(Icons.person_rounded),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: FilledButton(
+                    onPressed: (name.isEmpty || _saving)
+                        ? null
+                        : () => _submit(name),
+                    child: const Text('Continue'),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: TextButton(
+                    onPressed: _saving ? null : () => _submit('Guest'),
+                    child: const Text('Continue as guest'),
+                  ),
+                ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -969,47 +836,77 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
 // Shared widgets
 // -----------------------------------------------------------------------------
 
-/// Soft clean card used across the home screen.
-class GlassCard extends StatelessWidget {
-  const GlassCard({
+/// Flat Material 3 card (tonal surface, no border, no shadow).
+class AppCard extends StatelessWidget {
+  const AppCard({
     super.key,
     required this.child,
     this.padding = const EdgeInsets.all(20),
-    this.radius = 26,
-    this.glow,
+    this.radius = 28,
+    this.color,
   });
 
   final Widget child;
   final EdgeInsetsGeometry padding;
   final double radius;
-  final Color? glow;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final cs = Theme.of(context).colorScheme;
+
+    return SizedBox(
       width: double.infinity,
-      padding: padding,
-      decoration: BoxDecoration(
-        color: panel,
+      child: Material(
+        color: color ?? cs.surfaceContainer,
         borderRadius: BorderRadius.circular(radius),
-        border: Border.all(color: border),
-        boxShadow: glow == null
-            ? [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.03),
-                  blurRadius: 10,
-                  offset: const Offset(0, 3),
-                ),
-              ]
-            : [
-                BoxShadow(
-                  color: glow!.withValues(alpha: 0.20),
-                  blurRadius: 20,
-                  spreadRadius: -2,
-                ),
-              ],
+        clipBehavior: Clip.antiAlias,
+        child: Padding(padding: padding, child: child),
       ),
-      child: child,
+    );
+  }
+}
+
+/// Round tonal icon container, like the leading icons in Android settings.
+class TonalIcon extends StatelessWidget {
+  const TonalIcon(this.icon, {super.key, this.size = 40});
+
+  final IconData icon;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: cs.secondaryContainer,
+        shape: BoxShape.circle,
+      ),
+      child: Icon(icon, size: size * 0.5, color: cs.onSecondaryContainer),
+    );
+  }
+}
+
+/// Small coloured section title, like "Network & internet" headers.
+class SectionLabel extends StatelessWidget {
+  const SectionLabel(this.text, {super.key});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 24, bottom: 6),
+      child: Text(
+        text,
+        style: Theme.of(context).textTheme.labelLarge
+            ?.copyWith(color: cs.primary, fontWeight: FontWeight.w600),
+      ),
     );
   }
 }
@@ -1025,14 +922,14 @@ class Reveal extends StatelessWidget {
   Widget build(BuildContext context) {
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
-      duration: Duration(milliseconds: 450 + index * 140),
+      duration: Duration(milliseconds: 400 + index * 110),
       curve: Curves.easeOutCubic,
       child: child,
       builder: (context, t, child) {
         return Opacity(
           opacity: t.clamp(0.0, 1.0),
           child: Transform.translate(
-            offset: Offset(0, 18 * (1 - t)),
+            offset: Offset(0, 16 * (1 - t)),
             child: child,
           ),
         );
@@ -1061,7 +958,6 @@ class _HomeScreenState extends State<HomeScreen>
   late final AnimationController _floatController;
   late final AnimationController _pulseController;
 
-  // Battery events can arrive before the "connected" event.
   final Map<String, int> _pendingBattery = {};
   final List<HistoryEntry> history = [];
 
@@ -1069,7 +965,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   String deviceName = 'No earbuds connected';
   bool isConnected = false;
-  String status = 'WAITING FOR CONNECTION';
+  String status = 'Waiting for connection';
   String permissionStatus = 'Checking floating popup permission...';
   bool overlayGranted = false;
   bool bluetoothOn = true;
@@ -1092,6 +988,9 @@ class _HomeScreenState extends State<HomeScreen>
   // App version and updates
   String appVersion = '';
   bool checkingUpdate = false;
+
+  ColorScheme get cs => Theme.of(context).colorScheme;
+  TextTheme get tt => Theme.of(context).textTheme;
 
   @override
   void initState() {
@@ -1136,7 +1035,6 @@ class _HomeScreenState extends State<HomeScreen>
     _refreshEq();
     _loadBackgroundState();
 
-    // The user may have just allowed Bluetooth access in app settings.
     final hadPermission = bluetoothPermissionGranted;
     await _checkBluetoothPermission();
 
@@ -1175,6 +1073,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (duration is num) {
       popupDuration = duration.toDouble().clamp(5.0, 15.0).toDouble();
     }
+    // Old removed styles (midnight, glow) fall back to classic.
     if (styleId != null && popupStyles.any((s) => s.id == styleId)) {
       popupStyle = styleId;
     }
@@ -1191,6 +1090,12 @@ class _HomeScreenState extends State<HomeScreen>
       'style': popupStyle,
       'history': history.map((x) => x.toJson()).toList(),
     });
+  }
+
+  void _setThemeMode(ThemeMode mode) {
+    HapticFeedback.selectionClick();
+    themeModeNotifier.value = mode;
+    PrefsStore.update({'themeMode': mode.name});
   }
 
   void _syncAnimations() {
@@ -1224,43 +1129,28 @@ class _HomeScreenState extends State<HomeScreen>
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          backgroundColor: panel,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-          ),
-          title: const Text(
-            'Your name',
-            style: TextStyle(color: Colors.black87),
-          ),
+          title: const Text('Your name'),
           content: TextField(
             controller: controller,
             autofocus: true,
             maxLength: 20,
             textCapitalization: TextCapitalization.words,
-            style: const TextStyle(color: Colors.black87),
-            decoration: InputDecoration(
+            decoration: const InputDecoration(
               hintText: 'Guest',
-              hintStyle: const TextStyle(color: muted),
               counterText: '',
-              filled: true,
-              fillColor: panelLight,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide.none,
-              ),
             ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('CANCEL', style: TextStyle(color: muted)),
+              child: const Text('Cancel'),
             ),
-            TextButton(
+            FilledButton(
               onPressed: () {
                 final v = controller.text.trim();
                 Navigator.pop(dialogContext, v.isEmpty ? 'Guest' : v);
               },
-              child: const Text('SAVE', style: TextStyle(color: accent)),
+              child: const Text('Save'),
             ),
           ],
         );
@@ -1332,7 +1222,7 @@ class _HomeScreenState extends State<HomeScreen>
     setState(() {
       deviceName = name;
       isConnected = true;
-      status = 'CONNECTED';
+      status = 'Connected';
       batteryLevel = _pendingBattery.remove(name.toLowerCase());
       _addHistory(name, true);
     });
@@ -1346,7 +1236,7 @@ class _HomeScreenState extends State<HomeScreen>
     setState(() {
       _addHistory(deviceName, false);
       isConnected = false;
-      status = 'DISCONNECTED';
+      status = 'Disconnected';
       batteryLevel = null;
     });
     _syncAnimations();
@@ -1360,7 +1250,6 @@ class _HomeScreenState extends State<HomeScreen>
 
         final type = event['type']?.toString();
 
-        // Bluetooth adapter switched on or off.
         if (type == 'bluetoothState') {
           final enabled = event['enabled'] == true;
           setState(() => bluetoothOn = enabled);
@@ -1371,7 +1260,6 @@ class _HomeScreenState extends State<HomeScreen>
         final rawName = event['name']?.toString();
         final key = rawName?.toLowerCase();
 
-        // Battery updates never trigger a popup.
         if (type == 'battery') {
           final battery = event['battery'];
           if (battery is! int || battery < 0 || battery > 100) return;
@@ -1393,20 +1281,18 @@ class _HomeScreenState extends State<HomeScreen>
 
         if (!connected) {
           _pendingBattery.remove(name.toLowerCase());
-          // Ignore other devices (watch, car stereo...) disconnecting.
           if (!sameDevice) return;
           _markDisconnected();
           return;
         }
 
-        // Duplicate "connected" event: no new popup, no new history row.
         if (sameDevice) return;
 
         _markConnected(name);
       },
       onError: (error) {
         if (!mounted) return;
-        setState(() => status = 'BLUETOOTH LISTENER ERROR');
+        setState(() => status = 'Bluetooth listener error');
       },
     );
   }
@@ -1483,37 +1369,30 @@ class _HomeScreenState extends State<HomeScreen>
     _loadInitialDevice();
   }
 
-  Widget _buildBluetoothPermissionCard() {
-    return GlassCard(
+  /// Notice card used for permission / background prompts.
+  Widget _noticeCard({
+    required IconData icon,
+    required String title,
+    required String body,
+    required List<Widget> actions,
+  }) {
+    return AppCard(
       padding: const EdgeInsets.all(18),
       radius: 24,
-      glow: accent,
+      color: cs.secondaryContainer.withValues(alpha: 0.6),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: accent.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(13),
-                ),
-                child: const Icon(
-                  Icons.bluetooth_disabled_rounded,
-                  color: accent,
-                  size: 22,
-                ),
-              ),
+              Icon(icon, color: cs.onSecondaryContainer),
               const SizedBox(width: 12),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'Bluetooth access needed',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 15,
-                    color: Colors.black87,
+                  title,
+                  style: tt.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: cs.onSecondaryContainer,
                   ),
                 ),
               ),
@@ -1521,37 +1400,38 @@ class _HomeScreenState extends State<HomeScreen>
           ),
           const SizedBox(height: 10),
           Text(
-            bluetoothPermissionBlocked
-                ? 'Open app settings, tap Permissions, and allow "Nearby '
-                      'devices" so TWS POP can see your earbuds.'
-                : 'Allow "Nearby devices" so TWS POP can detect when your '
-                      'earbuds connect and read their battery.',
-            style: const TextStyle(color: muted, fontSize: 12, height: 1.5),
-          ),
-          const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: _requestBluetoothPermission,
-              style: FilledButton.styleFrom(
-                backgroundColor: accent,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                textStyle: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1,
-                ),
-              ),
-              child: Text(
-                bluetoothPermissionBlocked
-                    ? 'OPEN APP SETTINGS'
-                    : 'ALLOW BLUETOOTH ACCESS',
-              ),
+            body,
+            style: tt.bodySmall?.copyWith(
+              color: cs.onSecondaryContainer,
+              height: 1.45,
             ),
           ),
+          const SizedBox(height: 14),
+          Row(children: actions),
         ],
       ),
+    );
+  }
+
+  Widget _buildBluetoothPermissionCard() {
+    return _noticeCard(
+      icon: Icons.bluetooth_disabled_rounded,
+      title: 'Bluetooth access needed',
+      body: bluetoothPermissionBlocked
+          ? 'Open app settings, tap Permissions, and allow "Nearby devices" '
+                'so TWS POP can see your earbuds.'
+          : 'Allow "Nearby devices" so TWS POP can detect when your earbuds '
+                'connect and read their battery.',
+      actions: [
+        Expanded(
+          child: FilledButton(
+            onPressed: _requestBluetoothPermission,
+            child: Text(
+              bluetoothPermissionBlocked ? 'Open app settings' : 'Allow access',
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1619,134 +1499,52 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _buildBackgroundCard() {
-    return GlassCard(
-      padding: const EdgeInsets.all(18),
-      radius: 24,
-      glow: accent,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: accent.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(13),
-                ),
-                child: const Icon(
-                  Icons.battery_saver_rounded,
-                  color: accent,
-                  size: 22,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Expanded(
-                child: Text(
-                  'Keep running in background',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 15,
-                    color: Colors.black87,
-                  ),
-                ),
-              ),
-            ],
+    return _noticeCard(
+      icon: Icons.battery_saver_rounded,
+      title: 'Keep running in background',
+      body:
+          'Your phone may stop TWS POP after you swipe it away. Allow '
+          'unrestricted battery use so the popup keeps working.',
+      actions: [
+        Expanded(
+          child: FilledButton(
+            onPressed: _requestBatteryExemption,
+            child: const Text('Allow'),
           ),
-          const SizedBox(height: 10),
-          const Text(
-            'Your phone may stop TWS POP after you swipe it away. Allow '
-            'unrestricted battery use so the popup keeps working.',
-            style: TextStyle(color: muted, fontSize: 12, height: 1.5),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: OutlinedButton(
+            onPressed: _openAutostart,
+            child: const Text('Autostart'),
           ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton(
-                  onPressed: _requestBatteryExemption,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: accent,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    textStyle: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1,
-                    ),
-                  ),
-                  child: const Text('ALLOW'),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _openAutostart,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: accent,
-                    side: BorderSide(color: accent.withValues(alpha: 0.6)),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    textStyle: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1,
-                    ),
-                  ),
-                  child: const Text('AUTOSTART'),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
-  Widget _settingsRow({
+  /// Standard Android-style settings row.
+  Widget _tile({
     required IconData icon,
     required String title,
     required String subtitle,
-    required VoidCallback onTap,
+    VoidCallback? onTap,
+    Widget? trailing,
+    EdgeInsetsGeometry contentPadding = EdgeInsets.zero,
   }) {
-    return GestureDetector(
+    return ListTile(
       onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Row(
-        children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: accent.withValues(alpha: 0.10),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: accent, size: 20),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                    color: Colors.black87,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  subtitle,
-                  style: const TextStyle(color: muted, fontSize: 11),
-                ),
-              ],
-            ),
-          ),
-          const Icon(Icons.chevron_right_rounded, color: muted),
-        ],
+      contentPadding: contentPadding,
+      leading: TonalIcon(icon),
+      title: Text(
+        title,
+        style: tt.titleSmall?.copyWith(fontWeight: FontWeight.w600),
       ),
+      subtitle: Text(
+        subtitle,
+        style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+      ),
+      trailing: trailing,
     );
   }
 
@@ -1800,7 +1598,7 @@ class _HomeScreenState extends State<HomeScreen>
       setState(() {
         deviceName = name;
         isConnected = true;
-        status = 'CONNECTED';
+        status = 'Connected';
         batteryLevel = (battery is int && battery >= 0 && battery <= 100)
             ? battery
             : _pendingBattery.remove(name.toLowerCase());
@@ -1991,319 +1789,261 @@ class _HomeScreenState extends State<HomeScreen>
     return '$global  ·  $apps';
   }
 
-  Widget _sheetHandle() {
-    return Center(
-      child: Container(
-        width: 38,
-        height: 4,
-        decoration: BoxDecoration(
-          color: border,
-          borderRadius: BorderRadius.circular(4),
-        ),
-      ),
+  Future<void> _openSheet(
+    Widget Function(BuildContext context, StateSetter setSheetState) builder,
+  ) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) => builder(context, setSheetState),
+        );
+      },
     );
   }
 
   void _openEqualizer() {
     _refreshEq();
 
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: panel,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            final e = eq;
-            final ready = e != null && e.available;
+    _openSheet((sheetContext, setSheetState) {
+      final e = eq;
+      final ready = e != null && e.available;
 
-            return SafeArea(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 14, 24, 28),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
+      return SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Equalizer',
+                      style: tt.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  if (ready)
+                    Switch(
+                      value: e.enabled,
+                      onChanged: (v) =>
+                          _setEqEnabled(v, () => setSheetState(() {})),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Shape the sound of music from your other apps.',
+                style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
+              ),
+              const SizedBox(height: 20),
+              if (!ready)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: cs.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Text(
+                    'Equalizer is not available. Make sure the native files '
+                    'are added, then restart the app.',
+                    style: tt.bodySmall?.copyWith(
+                      color: cs.onSurfaceVariant,
+                      height: 1.5,
+                    ),
+                  ),
+                )
+              else ...[
+                SizedBox(
+                  height: 40,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: e.presets.length,
+                    separatorBuilder: (context, index) =>
+                        const SizedBox(width: 8),
+                    itemBuilder: (context, i) {
+                      return ChoiceChip(
+                        label: Text(e.presets[i]),
+                        selected: e.preset == i,
+                        showCheckmark: false,
+                        onSelected: (_) async {
+                          try {
+                            final levels = await eqChannel
+                                .invokeMethod<List<dynamic>>('usePreset', {
+                                  'index': i,
+                                });
+                            if (levels == null || levels.isEmpty) return;
+                            setState(() {
+                              e.preset = i;
+                              e.levels = levels
+                                  .map((x) => (x as num).toInt())
+                                  .toList();
+                            });
+                            setSheetState(() {});
+                          } on MissingPluginException {
+                            // Ignore.
+                          } on PlatformException {
+                            // Ignore.
+                          }
+                        },
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _sheetHandle(),
-                    const SizedBox(height: 22),
-                    Row(
-                      children: [
-                        const Expanded(
-                          child: Text(
-                            'Equalizer',
-                            style: TextStyle(
-                              fontSize: 25,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: -0.7,
-                              color: Colors.black87,
-                            ),
-                          ),
-                        ),
-                        if (ready)
-                          Switch(
-                            value: e.enabled,
-                            activeTrackColor: accent,
-                            onChanged: (v) =>
-                                _setEqEnabled(v, () => setSheetState(() {})),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'Shape the sound of music from your other apps.',
-                      style: TextStyle(color: muted),
-                    ),
-                    const SizedBox(height: 22),
-                    if (!ready)
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: panelLight,
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: const Text(
-                          'Equalizer is not available. Make sure the native '
-                          'files are added, then restart the app.',
-                          style: TextStyle(
-                            color: muted,
-                            fontSize: 12,
-                            height: 1.5,
-                          ),
-                        ),
-                      )
-                    else ...[
-                      SizedBox(
-                        height: 40,
-                        child: ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          itemCount: e.presets.length,
-                          separatorBuilder: (context, index) =>
-                              const SizedBox(width: 8),
-                          itemBuilder: (context, i) {
-                            return ChoiceChip(
-                              label: Text(
-                                e.presets[i],
-                                style: TextStyle(
-                                  color: e.preset == i
-                                      ? Colors.white
-                                      : Colors.black87,
-                                ),
-                              ),
-                              selected: e.preset == i,
-                              selectedColor: accent,
-                              backgroundColor: panelLight,
-                              side: BorderSide(
-                                color: e.preset == i ? accent : border,
-                              ),
-                              onSelected: (_) async {
-                                try {
-                                  final levels = await eqChannel
-                                      .invokeMethod<List<dynamic>>(
-                                        'usePreset',
-                                        {'index': i},
-                                      );
-                                  if (levels == null || levels.isEmpty) return;
-                                  setState(() {
-                                    e.preset = i;
-                                    e.levels = levels
-                                        .map((x) => (x as num).toInt())
-                                        .toList();
-                                  });
-                                  setSheetState(() {});
-                                } on MissingPluginException {
-                                  // Ignore.
-                                } on PlatformException {
-                                  // Ignore.
-                                }
-                              },
-                            );
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 22),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          for (var i = 0; i < e.levels.length; i++)
-                            Expanded(
-                              child: Column(
-                                children: [
-                                  Text(
-                                    '${(e.levels[i] / 100).toStringAsFixed(1)} dB',
-                                    style: const TextStyle(
-                                      color: accent,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  SizedBox(
-                                    height: 170,
-                                    child: RotatedBox(
-                                      quarterTurns: 3,
-                                      child: Slider(
-                                        value: e.levels[i]
-                                            .clamp(e.min, e.max)
-                                            .toDouble(),
-                                        min: e.min.toDouble(),
-                                        max: e.max.toDouble(),
-                                        activeColor: accent,
-                                        inactiveColor: border,
-                                        onChanged: (v) {
-                                          setState(() {
-                                            e.levels[i] = v.round();
-                                            e.preset = -1;
-                                          });
-                                          setSheetState(() {});
-                                          _eqCall('setBand', {
-                                            'band': i,
-                                            'level': v.round(),
-                                          });
-                                        },
-                                      ),
-                                    ),
-                                  ),
-                                  Text(
-                                    _bandLabel(e.freqs[i]),
-                                    style: const TextStyle(
-                                      color: muted,
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                        ],
-                      ),
-                      if (e.bassSupported) ...[
-                        const SizedBox(height: 18),
-                        Row(
+                    for (var i = 0; i < e.levels.length; i++)
+                      Expanded(
+                        child: Column(
                           children: [
-                            const Expanded(
-                              child: Text(
-                                'Bass boost',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.black87,
+                            Text(
+                              '${(e.levels[i] / 100).toStringAsFixed(1)} dB',
+                              style: tt.labelSmall?.copyWith(
+                                color: cs.primary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            SizedBox(
+                              height: 170,
+                              child: RotatedBox(
+                                quarterTurns: 3,
+                                child: Slider(
+                                  value: e.levels[i]
+                                      .clamp(e.min, e.max)
+                                      .toDouble(),
+                                  min: e.min.toDouble(),
+                                  max: e.max.toDouble(),
+                                  onChanged: (v) {
+                                    setState(() {
+                                      e.levels[i] = v.round();
+                                      e.preset = -1;
+                                    });
+                                    setSheetState(() {});
+                                    _eqCall('setBand', {
+                                      'band': i,
+                                      'level': v.round(),
+                                    });
+                                  },
                                 ),
                               ),
                             ),
                             Text(
-                              '${(e.bass / 10).round()}%',
-                              style: const TextStyle(
-                                color: accent,
-                                fontWeight: FontWeight.w700,
+                              _bandLabel(e.freqs[i]),
+                              style: tt.labelSmall?.copyWith(
+                                color: cs.onSurfaceVariant,
                               ),
                             ),
                           ],
                         ),
-                        Slider(
-                          value: e.bass
-                              .toDouble()
-                              .clamp(0.0, 1000.0)
-                              .toDouble(),
-                          min: 0,
-                          max: 1000,
-                          divisions: 20,
-                          activeColor: accent,
-                          inactiveColor: border,
-                          onChanged: (v) {
-                            setState(() => e.bass = v.round());
-                            setSheetState(() {});
-                            _eqCall('setBass', {'strength': v.round()});
-                          },
+                      ),
+                  ],
+                ),
+                if (e.bassSupported) ...[
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Bass boost',
+                          style: tt.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '${(e.bass / 10).round()}%',
+                        style: tt.labelLarge?.copyWith(
+                          color: cs.primary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Slider(
+                    value: e.bass.toDouble().clamp(0.0, 1000.0).toDouble(),
+                    min: 0,
+                    max: 1000,
+                    divisions: 20,
+                    onChanged: (v) {
+                      setState(() => e.bass = v.round());
+                      setSheetState(() {});
+                      _eqCall('setBass', {'strength': v.round()});
+                    },
+                  ),
+                ],
+              ],
+              const SizedBox(height: 14),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: cs.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.info_outline, color: cs.primary, size: 20),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Status',
+                            style: tt.labelLarge?.copyWith(
+                              color: cs.onSurfaceVariant,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () =>
+                              _refreshEq(() => setSheetState(() {})),
+                          tooltip: 'Refresh',
+                          visualDensity: VisualDensity.compact,
+                          icon: const Icon(Icons.refresh_rounded, size: 20),
                         ),
                       ],
-                    ],
-                    const SizedBox(height: 14),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: panelLight,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.info_outline,
-                                color: accent,
-                                size: 20,
-                              ),
-                              const SizedBox(width: 10),
-                              const Expanded(
-                                child: Text(
-                                  'STATUS',
-                                  style: TextStyle(
-                                    color: muted,
-                                    fontSize: 10,
-                                    letterSpacing: 2,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                              IconButton(
-                                onPressed: () =>
-                                    _refreshEq(() => setSheetState(() {})),
-                                tooltip: 'Refresh',
-                                visualDensity: VisualDensity.compact,
-                                color: accent,
-                                icon: const Icon(
-                                  Icons.refresh_rounded,
-                                  size: 20,
-                                ),
-                              ),
-                            ],
-                          ),
-                          Text(
-                            ready ? _eqStatus(e) : 'Unavailable',
-                            style: const TextStyle(
-                              color: Colors.black87,
-                              fontSize: 12,
-                              height: 1.5,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'Start music in your player app, then tap refresh. '
-                            'If app sessions stays at 0, that app does not '
-                            'share its audio with system equalizers.',
-                            style: TextStyle(
-                              color: muted,
-                              fontSize: 11,
-                              height: 1.5,
-                            ),
-                          ),
-                        ],
-                      ),
                     ),
-                    const SizedBox(height: 20),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(
-                        onPressed: () => Navigator.pop(sheetContext),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: accent,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 15),
-                        ),
-                        child: const Text('DONE'),
+                    Text(
+                      ready ? _eqStatus(e) : 'Unavailable',
+                      style: tt.bodySmall?.copyWith(height: 1.5),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Start music in your player app, then tap refresh. If '
+                      'app sessions stays at 0, that app does not share its '
+                      'audio with system equalizers.',
+                      style: tt.bodySmall?.copyWith(
+                        color: cs.onSurfaceVariant,
+                        height: 1.5,
                       ),
                     ),
                   ],
                 ),
               ),
-            );
-          },
-        );
-      },
-    );
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(sheetContext),
+                  child: const Text('Done'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -2439,29 +2179,36 @@ class _HomeScreenState extends State<HomeScreen>
   // Settings sheet
   // ---------------------------------------------------------------------------
 
+  /// Popup previews are always light, because the popup itself is always light.
   Widget _stylePreview(String id) {
     switch (id) {
-      case 'midnight':
+      case 'tonal':
         return Container(
           width: 38,
           height: 26,
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.only(left: 5),
           decoration: BoxDecoration(
-            color: const Color(0xFFE9ECEF),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: border),
+            color: _popupTonal,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Container(
+            width: 10,
+            height: 10,
+            decoration: const BoxDecoration(
+              color: accent,
+              shape: BoxShape.circle,
+            ),
           ),
         );
-      case 'glow':
+      case 'minimal':
         return Container(
           width: 38,
           height: 26,
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: accent, width: 1.5),
-            boxShadow: [
-              BoxShadow(color: accent.withValues(alpha: 0.3), blurRadius: 6),
-            ],
+            border: Border.all(color: _popupBorder),
           ),
         );
       case 'compact':
@@ -2486,342 +2233,276 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _styleOption(PopupStyle style, bool selected, VoidCallback onTap) {
-    return GestureDetector(
+    return InkWell(
       onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              color: panelLight,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                color: selected ? accent : border,
-                width: selected ? 2 : 1,
+      borderRadius: BorderRadius.circular(18),
+      child: Padding(
+        padding: const EdgeInsets.all(2),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: _popupSurface,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: selected ? cs.primary : cs.outlineVariant,
+                  width: selected ? 2.5 : 1,
+                ),
+              ),
+              child: Center(child: _stylePreview(style.id)),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              style.label,
+              style: tt.labelMedium?.copyWith(
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: selected ? cs.onSurface : cs.onSurfaceVariant,
               ),
             ),
-            child: Center(child: _stylePreview(style.id)),
-          ),
-          const SizedBox(height: 7),
-          Text(
-            style.label,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-              color: selected ? Colors.black87 : muted,
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
   void _openSettings() {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: panel,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            return SafeArea(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 14, 24, 28),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _sheetHandle(),
-                    const SizedBox(height: 24),
-                    const Text(
-                      'Settings',
-                      style: TextStyle(
-                        fontSize: 25,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: -0.7,
-                        color: Colors.black87,
-                      ),
+    _openSheet((sheetContext, setSheetState) {
+      return SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Settings',
+                style: tt.headlineSmall?.copyWith(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 18),
+              AppCard(
+                padding: EdgeInsets.zero,
+                radius: 24,
+                color: cs.surfaceContainerHighest,
+                child: ListTile(
+                  onTap: () => _editName(() => setSheetState(() {})),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 4,
+                  ),
+                  leading: CircleAvatar(
+                    backgroundColor: cs.primary,
+                    foregroundColor: cs.onPrimary,
+                    child: Text(
+                      userName.isEmpty
+                          ? '?'
+                          : userName.characters.first.toUpperCase(),
+                      style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
-                    const SizedBox(height: 20),
-                    GestureDetector(
-                      onTap: () => _editName(() => setSheetState(() {})),
-                      behavior: HitTestBehavior.opaque,
-                      child: Container(
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: panelLight,
-                          borderRadius: BorderRadius.circular(18),
-                        ),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 42,
-                              height: 42,
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [accent, violet],
-                                ),
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              alignment: Alignment.center,
-                              child: Text(
-                                userName.isEmpty
-                                    ? '?'
-                                    : userName.characters.first.toUpperCase(),
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 17,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 14),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text(
-                                    'YOUR NAME',
-                                    style: TextStyle(
-                                      color: muted,
-                                      fontSize: 9,
-                                      letterSpacing: 2,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    userName,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 15,
-                                      color: Colors.black87,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const Icon(
-                              Icons.edit_rounded,
-                              color: accent,
-                              size: 20,
-                            ),
-                          ],
-                        ),
-                      ),
+                  ),
+                  title: Text(
+                    userName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: tt.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
                     ),
-                    const SizedBox(height: 26),
-                    const Text(
-                      'BACKGROUND',
-                      style: TextStyle(
-                        color: muted,
-                        fontSize: 10,
-                        letterSpacing: 2,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      activeThumbColor: Colors.white,
-                      activeTrackColor: accent,
-                      title: const Text(
-                        'Keep running in background',
-                        style: TextStyle(color: Colors.black87),
-                      ),
-                      subtitle: const Text(
-                        'Detect earbuds and show the popup even when the app '
-                        'is closed',
-                      ),
-                      value: watcherEnabled,
-                      onChanged: (v) =>
-                          _setWatcher(v, () => setSheetState(() {})),
-                    ),
-                    const SizedBox(height: 10),
-                    _settingsRow(
-                      icon: Icons.battery_charging_full_rounded,
-                      title: 'Battery optimization',
-                      subtitle: batteryExempt
-                          ? 'Unrestricted'
-                          : 'Restricted, tap to allow',
-                      onTap: _requestBatteryExemption,
-                    ),
-                    const SizedBox(height: 16),
-                    _settingsRow(
-                      icon: Icons.rocket_launch_rounded,
-                      title: 'Autostart',
-                      subtitle: 'Needed on Xiaomi, Oppo, Vivo, Realme, Samsung',
-                      onTap: _openAutostart,
-                    ),
-                    const SizedBox(height: 26),
-                    const Text(
-                      'POPUP',
-                      style: TextStyle(
-                        color: muted,
-                        fontSize: 10,
-                        letterSpacing: 2,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      activeThumbColor: Colors.white,
-                      activeTrackColor: accent,
-                      title: const Text(
-                        'Connection popup',
-                        style: TextStyle(color: Colors.black87),
-                      ),
-                      subtitle: const Text(
-                        'Show the popup when an audio device connects',
-                      ),
-                      value: popupEnabled,
-                      onChanged: (value) {
-                        setState(() => popupEnabled = value);
-                        setSheetState(() {});
-                        _savePrefs();
-                      },
-                    ),
-                    const Divider(color: border, height: 24),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      activeThumbColor: Colors.white,
-                      activeTrackColor: accent,
-                      title: const Text(
-                        'Floating artwork animation',
-                        style: TextStyle(color: Colors.black87),
-                      ),
-                      subtitle: const Text('Keep the gentle artwork movement'),
-                      value: floatingAnimation,
-                      onChanged: (value) {
-                        setState(() => floatingAnimation = value);
-                        setSheetState(() {});
-                        _syncAnimations();
-                        _savePrefs();
-                      },
-                    ),
-                    const Divider(color: border, height: 24),
-                    const Text(
-                      'Popup style',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: Colors.black87,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        for (final style in popupStyles)
-                          _styleOption(style, popupStyle == style.id, () {
-                            setState(() => popupStyle = style.id);
-                            setSheetState(() {});
-                            _savePrefs();
-                          }),
-                      ],
-                    ),
-                    const SizedBox(height: 22),
-                    Row(
-                      children: [
-                        const Expanded(
-                          child: Text(
-                            'Popup display duration',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              color: Colors.black87,
-                            ),
-                          ),
-                        ),
-                        Text(
-                          '${popupDuration.toStringAsFixed(1)} sec',
-                          style: const TextStyle(
-                            color: accent,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ),
-                    Slider(
-                      value: popupDuration,
-                      min: 5,
-                      max: 15,
-                      divisions: 20,
-                      activeColor: accent,
-                      inactiveColor: border,
-                      onChanged: (value) {
-                        setState(() => popupDuration = value);
-                        setSheetState(() {});
-                      },
-                      onChangeEnd: (_) => _savePrefs(),
-                    ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: () => _requestAndShowPopup(
-                          isConnected ? deviceName : 'Test Earbuds',
-                        ),
-                        icon: const Icon(Icons.play_arrow_rounded),
-                        label: const Text('PREVIEW POPUP'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: accent,
-                          side: const BorderSide(color: accent),
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 26),
-                    const Text(
-                      'ABOUT',
-                      style: TextStyle(
-                        color: muted,
-                        fontSize: 10,
-                        letterSpacing: 2,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    _settingsRow(
-                      icon: Icons.system_update_rounded,
-                      title: 'Check for updates',
-                      subtitle: checkingUpdate
-                          ? 'Checking...'
-                          : appVersion.isEmpty
-                          ? 'Tap to check'
-                          : 'Version $appVersion  ·  tap to check',
-                      onTap: () =>
-                          _manualUpdateCheck(() => setSheetState(() {})),
-                    ),
-                    const SizedBox(height: 24),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(
-                        onPressed: () => Navigator.pop(sheetContext),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: accent,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 15),
-                        ),
-                        child: const Text('DONE'),
-                      ),
-                    ),
-                  ],
+                  ),
+                  subtitle: const Text('Tap to change your name'),
+                  trailing: Icon(Icons.edit_rounded, color: cs.primary),
                 ),
               ),
-            );
-          },
-        );
-      },
-    );
+
+              // ---- Appearance ----
+              const SectionLabel('Appearance'),
+              const SizedBox(height: 4),
+              SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<ThemeMode>(
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(
+                      value: ThemeMode.system,
+                      icon: Icon(Icons.brightness_auto_rounded),
+                      label: Text('System'),
+                    ),
+                    ButtonSegment(
+                      value: ThemeMode.light,
+                      icon: Icon(Icons.light_mode_rounded),
+                      label: Text('Light'),
+                    ),
+                    ButtonSegment(
+                      value: ThemeMode.dark,
+                      icon: Icon(Icons.dark_mode_rounded),
+                      label: Text('Dark'),
+                    ),
+                  ],
+                  selected: {themeModeNotifier.value},
+                  onSelectionChanged: (s) {
+                    _setThemeMode(s.first);
+                    setSheetState(() {});
+                  },
+                ),
+              ),
+
+              // ---- Background ----
+              const SectionLabel('Background'),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Keep running in background'),
+                subtitle: const Text(
+                  'Detect earbuds and show the popup even when the app is '
+                  'closed',
+                ),
+                value: watcherEnabled,
+                onChanged: (v) => _setWatcher(v, () => setSheetState(() {})),
+              ),
+              _tile(
+                icon: Icons.battery_charging_full_rounded,
+                title: 'Battery optimization',
+                subtitle: batteryExempt
+                    ? 'Unrestricted'
+                    : 'Restricted, tap to allow',
+                onTap: _requestBatteryExemption,
+                trailing: const Icon(Icons.chevron_right_rounded),
+              ),
+              _tile(
+                icon: Icons.rocket_launch_rounded,
+                title: 'Autostart',
+                subtitle: 'Needed on Xiaomi, Oppo, Vivo, Realme, Samsung',
+                onTap: _openAutostart,
+                trailing: const Icon(Icons.chevron_right_rounded),
+              ),
+
+              // ---- Popup ----
+              const SectionLabel('Popup'),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Connection popup'),
+                subtitle: const Text(
+                  'Show the popup when an audio device connects',
+                ),
+                value: popupEnabled,
+                onChanged: (value) {
+                  setState(() => popupEnabled = value);
+                  setSheetState(() {});
+                  _savePrefs();
+                },
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Floating artwork animation'),
+                subtitle: const Text('Keep the gentle artwork movement'),
+                value: floatingAnimation,
+                onChanged: (value) {
+                  setState(() => floatingAnimation = value);
+                  setSheetState(() {});
+                  _syncAnimations();
+                  _savePrefs();
+                },
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'Popup style',
+                style: tt.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'The popup always uses a light design.',
+                style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  for (final style in popupStyles)
+                    _styleOption(style, popupStyle == style.id, () {
+                      setState(() => popupStyle = style.id);
+                      setSheetState(() {});
+                      _savePrefs();
+                    }),
+                ],
+              ),
+              const SizedBox(height: 22),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Popup display duration',
+                      style: tt.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '${popupDuration.toStringAsFixed(1)} sec',
+                    style: tt.labelLarge?.copyWith(
+                      color: cs.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+              Slider(
+                value: popupDuration,
+                min: 5,
+                max: 15,
+                divisions: 20,
+                onChanged: (value) {
+                  setState(() => popupDuration = value);
+                  setSheetState(() {});
+                },
+                onChangeEnd: (_) => _savePrefs(),
+              ),
+              const SizedBox(height: 4),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: OutlinedButton.icon(
+                  onPressed: () => _requestAndShowPopup(
+                    isConnected ? deviceName : 'Test Earbuds',
+                  ),
+                  icon: const Icon(Icons.play_arrow_rounded),
+                  label: const Text('Preview popup'),
+                ),
+              ),
+
+              // ---- About ----
+              const SectionLabel('About'),
+              _tile(
+                icon: Icons.system_update_rounded,
+                title: 'Check for updates',
+                subtitle: checkingUpdate
+                    ? 'Checking...'
+                    : appVersion.isEmpty
+                    ? 'Tap to check'
+                    : 'Version $appVersion  ·  tap to check',
+                onTap: () => _manualUpdateCheck(() => setSheetState(() {})),
+                trailing: checkingUpdate
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2.5),
+                      )
+                    : const Icon(Icons.chevron_right_rounded),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(sheetContext),
+                  child: const Text('Done'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -2829,133 +2510,88 @@ class _HomeScreenState extends State<HomeScreen>
   // ---------------------------------------------------------------------------
 
   Widget _historyRow(HistoryEntry e) {
-    final color = e.connected ? accent : muted;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 9),
-      child: Row(
-        children: [
-          Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.10),
-              borderRadius: BorderRadius.circular(11),
-            ),
-            child: Icon(
-              e.connected ? Icons.link_rounded : Icons.link_off_rounded,
-              size: 18,
-              color: color,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  e.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black87,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  e.connected ? 'Connected' : 'Disconnected',
-                  style: const TextStyle(color: muted, fontSize: 11),
-                ),
-              ],
-            ),
-          ),
-          Text(
-            _formatTime(e.time),
-            style: const TextStyle(color: muted, fontSize: 11),
-          ),
-        ],
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      leading: TonalIcon(
+        e.connected ? Icons.link_rounded : Icons.link_off_rounded,
+        size: 36,
+      ),
+      title: Text(
+        e.name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: tt.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+      ),
+      subtitle: Text(
+        e.connected ? 'Connected' : 'Disconnected',
+        style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+      ),
+      trailing: Text(
+        _formatTime(e.time),
+        style: tt.labelSmall?.copyWith(color: cs.onSurfaceVariant),
       ),
     );
   }
 
   void _openHistory() {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: panel,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(24, 14, 24, 20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _sheetHandle(),
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        const Expanded(
-                          child: Text(
-                            'Connection history',
-                            style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: -0.6,
-                              color: Colors.black87,
-                            ),
-                          ),
-                        ),
-                        if (history.isNotEmpty)
-                          TextButton(
-                            onPressed: () {
-                              setState(history.clear);
-                              setSheetState(() {});
-                              _savePrefs();
-                            },
-                            child: const Text(
-                              'CLEAR',
-                              style: TextStyle(color: accent),
-                            ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    if (history.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 28),
-                        child: Center(
-                          child: Text(
-                            'No connections yet',
-                            style: TextStyle(color: muted),
-                          ),
-                        ),
-                      )
-                    else
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxHeight: MediaQuery.of(context).size.height * 0.55,
-                        ),
-                        child: ListView(
-                          shrinkWrap: true,
-                          children: history.map(_historyRow).toList(),
-                        ),
+    _openSheet((sheetContext, setSheetState) {
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Connection history',
+                      style: tt.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
                       ),
-                  ],
-                ),
+                    ),
+                  ),
+                  if (history.isNotEmpty)
+                    TextButton(
+                      onPressed: () {
+                        setState(history.clear);
+                        setSheetState(() {});
+                        _savePrefs();
+                      },
+                      child: const Text('Clear'),
+                    ),
+                ],
               ),
-            );
-          },
-        );
-      },
-    );
+              const SizedBox(height: 8),
+              if (history.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 28),
+                  child: Center(
+                    child: Text(
+                      'No connections yet',
+                      style: tt.bodyMedium?.copyWith(
+                        color: cs.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                )
+              else
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(context).size.height * 0.55,
+                  ),
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: history.map(_historyRow).toList(),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -2965,11 +2601,10 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _buildBluetoothPill() {
     return Container(
       height: 40,
-      padding: const EdgeInsets.only(left: 11, right: 5),
+      padding: const EdgeInsets.only(left: 12, right: 4),
       decoration: BoxDecoration(
-        color: panelLight,
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: border),
+        color: cs.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(20),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -2979,20 +2614,15 @@ class _HomeScreenState extends State<HomeScreen>
                 ? Icons.bluetooth_rounded
                 : Icons.bluetooth_disabled_rounded,
             size: 18,
-            color: bluetoothOn ? accent : muted,
+            color: bluetoothOn ? cs.primary : cs.onSurfaceVariant,
           ),
           const SizedBox(width: 2),
           SizedBox(
-            width: 44,
+            width: 46,
             height: 32,
             child: FittedBox(
               fit: BoxFit.contain,
-              child: Switch(
-                value: bluetoothOn,
-                activeTrackColor: accent,
-                activeThumbColor: Colors.white,
-                onChanged: _toggleBluetooth,
-              ),
+              child: Switch(value: bluetoothOn, onChanged: _toggleBluetooth),
             ),
           ),
         ],
@@ -3009,15 +2639,15 @@ class _HomeScreenState extends State<HomeScreen>
           ? Image.asset(
               deviceImage,
               key: ValueKey(deviceImage),
-              width: 145,
-              height: 145,
+              width: 130,
+              height: 130,
               fit: BoxFit.contain,
               errorBuilder: (context, error, stackTrace) {
-                return const Icon(
+                return Icon(
                   Icons.headphones_rounded,
-                  key: ValueKey('fallback'),
-                  size: 82,
-                  color: accent,
+                  key: const ValueKey('fallback'),
+                  size: 76,
+                  color: cs.primary,
                 );
               },
             )
@@ -3026,8 +2656,8 @@ class _HomeScreenState extends State<HomeScreen>
                   ? Icons.bluetooth_searching_rounded
                   : Icons.bluetooth_disabled_rounded,
               key: ValueKey('disconnected-$bluetoothOn'),
-              size: 82,
-              color: bluetoothOn ? accent : muted,
+              size: 76,
+              color: bluetoothOn ? cs.primary : cs.onSurfaceVariant,
             ),
     );
 
@@ -3044,7 +2674,7 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _buildArtworkStage() {
     return SizedBox(
       width: 200,
-      height: 200,
+      height: 190,
       child: Stack(
         alignment: Alignment.center,
         children: [
@@ -3056,29 +2686,25 @@ class _HomeScreenState extends State<HomeScreen>
                 return Opacity(
                   opacity: ((1 - t) * 0.5).clamp(0.0, 1.0),
                   child: Container(
-                    width: 150 + 46 * t,
-                    height: 150 + 46 * t,
+                    width: 150 + 40 * t,
+                    height: 150 + 40 * t,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      border: Border.all(color: accent, width: 1.5),
+                      border: Border.all(color: cs.primary, width: 1.5),
                     ),
                   ),
                 );
               },
             ),
           Container(
-            width: 170,
-            height: 170,
+            width: 160,
+            height: 160,
             alignment: Alignment.center,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              gradient: RadialGradient(
-                colors: [
-                  accent.withValues(alpha: isConnected ? 0.15 : 0.05),
-                  accent.withValues(alpha: 0.01),
-                ],
+              color: cs.primaryContainer.withValues(
+                alpha: isConnected ? 0.55 : 0.3,
               ),
-              border: Border.all(color: accent.withValues(alpha: 0.2)),
             ),
             child: _buildDeviceArtwork(),
           ),
@@ -3087,29 +2713,28 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _buildBatterySection(Color batteryColor) {
+  Widget _buildBatterySection() {
     if (!isConnected) return const SizedBox.shrink();
 
     return Column(
       children: [
-        const SizedBox(height: 22),
-        Container(height: 1, color: border),
+        const SizedBox(height: 20),
+        Divider(color: cs.outlineVariant, height: 1),
         const SizedBox(height: 18),
         Row(
           children: [
-            Icon(Icons.battery_6_bar_rounded, color: batteryColor, size: 23),
+            Icon(Icons.battery_6_bar_rounded, color: cs.primary, size: 22),
             const SizedBox(width: 10),
-            const Expanded(
+            Expanded(
               child: Text(
                 'Device battery',
-                style: TextStyle(color: muted, fontSize: 13),
+                style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
               ),
             ),
             Text(
               batteryLevel == null ? '--' : '$batteryLevel%',
-              style: TextStyle(
-                color: batteryColor,
-                fontSize: 16,
+              style: tt.titleMedium?.copyWith(
+                color: cs.primary,
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -3121,20 +2746,19 @@ class _HomeScreenState extends State<HomeScreen>
             borderRadius: BorderRadius.circular(10),
             child: LinearProgressIndicator(
               value: batteryLevel! / 100,
-              minHeight: 5,
-              backgroundColor: panelLight,
-              valueColor: AlwaysStoppedAnimation<Color>(batteryColor),
+              minHeight: 6,
+              backgroundColor: cs.surfaceContainerHighest,
             ),
           ),
           if (batteryLevel! <= 20) ...[
             const SizedBox(height: 10),
-            const Row(
+            Row(
               children: [
-                Icon(Icons.battery_alert_rounded, color: accent, size: 16),
-                SizedBox(width: 7),
+                Icon(Icons.battery_alert_rounded, color: cs.primary, size: 16),
+                const SizedBox(width: 7),
                 Text(
                   'Battery running low',
-                  style: TextStyle(color: accent, fontSize: 12),
+                  style: tt.bodySmall?.copyWith(color: cs.primary),
                 ),
               ],
             ),
@@ -3144,79 +2768,50 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _buildDeviceCard(Color batteryColor) {
-    return GlassCard(
+  Widget _buildDeviceCard() {
+    return AppCard(
       padding: const EdgeInsets.all(22),
       radius: 28,
-      glow: isConnected ? accent : null,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-            decoration: BoxDecoration(
-              color: isConnected ? accent.withValues(alpha: 0.10) : panelLight,
-              borderRadius: BorderRadius.circular(30),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 6,
-                  height: 6,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: isConnected ? accent : muted,
-                  ),
-                ),
-                const SizedBox(width: 7),
-                Text(
-                  isConnected ? 'CONNECTED' : 'NOT CONNECTED',
-                  style: TextStyle(
-                    fontSize: 9,
-                    letterSpacing: 1.1,
-                    fontWeight: FontWeight.w700,
-                    color: isConnected ? accent : muted,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 14),
           Center(child: _buildArtworkStage()),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
           Text(
-            isConnected ? 'CURRENT DEVICE' : 'READY WHEN YOU ARE',
-            style: const TextStyle(
-              color: muted,
-              fontSize: 10,
-              letterSpacing: 2,
-              fontWeight: FontWeight.w600,
-            ),
+            isConnected ? 'Current device' : 'Ready when you are',
+            style: tt.labelMedium?.copyWith(color: cs.onSurfaceVariant),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
           Text(
             deviceName,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 23,
+            style: tt.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w600,
               height: 1.2,
-              letterSpacing: -0.5,
-              fontWeight: FontWeight.w700,
-              color: Colors.black87,
             ),
           ),
           const SizedBox(height: 8),
-          Text(
-            status,
-            style: const TextStyle(
-              color: muted,
-              fontSize: 11,
-              letterSpacing: 1.1,
-            ),
+          Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: isConnected ? cs.primary : cs.outline,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  status,
+                  style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
+                ),
+              ),
+            ],
           ),
-          _buildBatterySection(batteryColor),
+          _buildBatterySection(),
         ],
       ),
     );
@@ -3227,60 +2822,22 @@ class _HomeScreenState extends State<HomeScreen>
     final available = e != null && e.available;
     final on = available && e.enabled;
 
-    return GestureDetector(
-      onTap: _openEqualizer,
-      behavior: HitTestBehavior.opaque,
-      child: GlassCard(
-        padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 14),
-        radius: 22,
-        glow: on ? accent : null,
-        child: Row(
-          children: [
-            Container(
-              width: 43,
-              height: 43,
-              decoration: BoxDecoration(
-                color: accent.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: const Icon(Icons.equalizer_rounded, color: accent),
-            ),
-            const SizedBox(width: 13),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Equalizer',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                      color: Colors.black87,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    !available
-                        ? 'Tap to set up'
-                        : on
-                        ? 'On  ·  works across your apps'
-                        : 'Off  ·  tap to tune your sound',
-                    style: const TextStyle(color: muted, fontSize: 11),
-                  ),
-                ],
-              ),
-            ),
-            if (available)
-              Switch(
-                value: e.enabled,
-                activeTrackColor: accent,
-                activeThumbColor: Colors.white,
-                onChanged: (v) => _setEqEnabled(v),
-              )
-            else
-              const Icon(Icons.chevron_right_rounded, color: muted),
-          ],
-        ),
+    return AppCard(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      radius: 24,
+      child: _tile(
+        icon: Icons.equalizer_rounded,
+        title: 'Equalizer',
+        subtitle: !available
+            ? 'Tap to set up'
+            : on
+            ? 'On  ·  works across your apps'
+            : 'Off  ·  tap to tune your sound',
+        onTap: _openEqualizer,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+        trailing: available
+            ? Switch(value: e.enabled, onChanged: (v) => _setEqEnabled(v))
+            : const Icon(Icons.chevron_right_rounded),
       ),
     );
   }
@@ -3288,50 +2845,33 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _buildHistoryCard() {
     final recent = history.take(4).toList();
 
-    return GlassCard(
-      padding: const EdgeInsets.fromLTRB(18, 14, 18, 8),
-      radius: 22,
+    return AppCard(
+      padding: const EdgeInsets.fromLTRB(18, 10, 18, 8),
+      radius: 24,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Text(
-                'RECENT ACTIVITY',
-                style: TextStyle(
-                  color: muted,
-                  fontSize: 10,
-                  letterSpacing: 2,
-                  fontWeight: FontWeight.w600,
-                ),
+              Text(
+                'Recent activity',
+                style: tt.titleSmall?.copyWith(fontWeight: FontWeight.w600),
               ),
               const Spacer(),
               if (history.isNotEmpty)
                 TextButton(
                   onPressed: _openHistory,
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    minimumSize: const Size(0, 32),
-                  ),
-                  child: const Text(
-                    'VIEW ALL',
-                    style: TextStyle(
-                      color: accent,
-                      fontSize: 10,
-                      letterSpacing: 1.2,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
+                  child: const Text('View all'),
                 ),
             ],
           ),
           if (recent.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 22),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 22),
               child: Center(
                 child: Text(
                   'No connections yet',
-                  style: TextStyle(color: muted, fontSize: 12),
+                  style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
                 ),
               ),
             )
@@ -3347,259 +2887,165 @@ class _HomeScreenState extends State<HomeScreen>
         .firstWhere((s) => s.id == popupStyle, orElse: () => popupStyles.first)
         .label;
 
-    return GestureDetector(
-      onTap: _openSettings,
-      behavior: HitTestBehavior.opaque,
-      child: GlassCard(
-        padding: const EdgeInsets.all(17),
-        radius: 22,
-        child: Row(
-          children: [
-            Container(
-              width: 43,
-              height: 43,
-              decoration: BoxDecoration(
-                color: accent.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: const Icon(Icons.auto_awesome_rounded, color: accent),
-            ),
-            const SizedBox(width: 13),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Popup style',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                      color: Colors.black87,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '$label  ·  tap to change',
-                    style: const TextStyle(color: muted, fontSize: 11),
-                  ),
-                ],
-              ),
-            ),
-            const Icon(Icons.chevron_right_rounded, color: muted),
-          ],
-        ),
+    return AppCard(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      radius: 24,
+      child: _tile(
+        icon: Icons.auto_awesome_rounded,
+        title: 'Popup style',
+        subtitle: '$label  ·  tap to change',
+        onTap: _openSettings,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+        trailing: const Icon(Icons.chevron_right_rounded),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final batteryColor = batteryLevel == null
-        ? muted
-        : batteryLevel! <= 20
-        ? accent
-        : success;
-
     return Scaffold(
-      body: Stack(
-        children: [
-          Positioned(
-            top: -130,
-            right: -110,
-            child: glowBlob(360, accent, 0.10),
-          ),
-          Positioned(
-            bottom: -150,
-            left: -130,
-            child: glowBlob(340, violet, 0.06),
-          ),
-          SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(22, 16, 22, 28),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Reveal(
-                    index: 0,
-                    child: Row(
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(14),
-                          child: Image.asset(
-                            'assets/images/app_icon.png',
-                            width: 44,
-                            height: 44,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) =>
-                                const LogoMark(size: 44),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        const Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'TWS POP',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 2.2,
-                                  color: Colors.black87,
-                                ),
-                              ),
-                              SizedBox(height: 3),
-                              Text(
-                                'AUDIO COMPANION',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: muted,
-                                  fontSize: 9,
-                                  letterSpacing: 1.4,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        _buildBluetoothPill(),
-                        const SizedBox(width: 8),
-                        IconButton(
-                          onPressed: _openSettings,
-                          tooltip: 'Settings',
-                          style: IconButton.styleFrom(
-                            backgroundColor: panelLight,
-                            foregroundColor: Colors.black87,
-                          ),
-                          icon: const Icon(Icons.settings_rounded),
-                        ),
-                      ],
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Reveal(
+                index: 0,
+                child: Row(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.asset(
+                        'assets/images/app_icon.png',
+                        width: 38,
+                        height: 38,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) =>
+                            const LogoMark(size: 38),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 30),
-                  Reveal(
-                    index: 1,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        GestureDetector(
-                          onTap: _editName,
-                          behavior: HitTestBehavior.opaque,
-                          child: ShaderMask(
-                            shaderCallback: (rect) =>
-                                const LinearGradient(colors: [accent, violet])
-                                    .createShader(rect),
-                            child: Text(
-                              'HELLO, ${userName.toUpperCase()}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                letterSpacing: 3.2,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'TWS POP',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: tt.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.6,
                         ),
-                        const SizedBox(height: 10),
-                        const Text(
-                          'Every connection.\nA little more personal.',
-                          style: TextStyle(
-                            fontSize: 31,
-                            height: 1.13,
-                            letterSpacing: -1.2,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.black87,
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 24),
-                  if (!bluetoothPermissionGranted) ...[
-                    _buildBluetoothPermissionCard(),
-                    const SizedBox(height: 14),
+                    _buildBluetoothPill(),
+                    const SizedBox(width: 8),
+                    IconButton.filledTonal(
+                      onPressed: _openSettings,
+                      tooltip: 'Settings',
+                      icon: const Icon(Icons.settings_rounded),
+                    ),
                   ],
-                  Reveal(index: 2, child: _buildDeviceCard(batteryColor)),
-                  const SizedBox(height: 14),
-                  if (watcherEnabled && !batteryExempt) ...[
-                    _buildBackgroundCard(),
-                    const SizedBox(height: 14),
-                  ],
-                  Reveal(index: 3, child: _buildEqTile()),
-                  const SizedBox(height: 14),
-                  Reveal(index: 4, child: _buildHistoryCard()),
-                  const SizedBox(height: 14),
-                  Reveal(index: 5, child: _buildStyleTile()),
-                  const SizedBox(height: 18),
-                  Reveal(
-                    index: 6,
-                    child: Column(
-                      children: [
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton.icon(
-                            onPressed: overlayGranted
-                                ? null
-                                : requestOverlayPermission,
-                            icon: Icon(
-                              overlayGranted
-                                  ? Icons.check_circle_outline_rounded
-                                  : Icons.open_in_new_rounded,
-                            ),
-                            label: Text(
-                              overlayGranted
-                                  ? 'FLOATING POPUP ENABLED'
-                                  : 'ENABLE FLOATING POPUP',
-                            ),
-                            style: FilledButton.styleFrom(
-                              backgroundColor: accent,
-                              foregroundColor: Colors.white,
-                              disabledBackgroundColor: panelLight,
-                              disabledForegroundColor: accent,
-                              padding: const EdgeInsets.symmetric(vertical: 17),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(17),
-                              ),
-                              textStyle: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 1,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          permissionStatus,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: muted,
-                            fontSize: 11,
-                            height: 1.4,
-                          ),
-                        ),
-                        const SizedBox(height: 27),
-                        const Text(
-                          'MADE FOR YOUR EVERYDAY SOUND',
-                          style: TextStyle(
-                            color: muted,
-                            fontSize: 9,
-                            letterSpacing: 2,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+                ),
               ),
-            ),
+              const SizedBox(height: 28),
+              Reveal(
+                index: 1,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    GestureDetector(
+                      onTap: _editName,
+                      behavior: HitTestBehavior.opaque,
+                      child: Text(
+                        'Hello, $userName',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: tt.headlineLarge?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Every connection. A little more personal.',
+                      style: tt.bodyLarge?.copyWith(color: cs.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 22),
+              if (!bluetoothPermissionGranted) ...[
+                _buildBluetoothPermissionCard(),
+                const SizedBox(height: 12),
+              ],
+              Reveal(index: 2, child: _buildDeviceCard()),
+              const SizedBox(height: 12),
+              if (watcherEnabled && !batteryExempt) ...[
+                _buildBackgroundCard(),
+                const SizedBox(height: 12),
+              ],
+              Reveal(index: 3, child: _buildEqTile()),
+              const SizedBox(height: 12),
+              Reveal(index: 4, child: _buildHistoryCard()),
+              const SizedBox(height: 12),
+              Reveal(index: 5, child: _buildStyleTile()),
+              const SizedBox(height: 20),
+              Reveal(
+                index: 6,
+                child: Column(
+                  children: [
+                    if (overlayGranted)
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.check_circle_rounded,
+                            size: 18,
+                            color: cs.primary,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            permissionStatus,
+                            style: tt.bodySmall?.copyWith(
+                              color: cs.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      )
+                    else ...[
+                      SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: FilledButton.icon(
+                          onPressed: requestOverlayPermission,
+                          icon: const Icon(Icons.open_in_new_rounded),
+                          label: const Text('Enable floating popup'),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        permissionStatus,
+                        textAlign: TextAlign.center,
+                        style: tt.bodySmall?.copyWith(
+                          color: cs.onSurfaceVariant,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 24),
+                    Text(
+                      'Made for your everyday sound',
+                      style: tt.labelSmall?.copyWith(
+                        color: cs.onSurfaceVariant,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

@@ -468,7 +468,7 @@ class EarbudPopupService : Service() {
     private fun playVideo(video: VideoView, deviceType: DeviceType) {
         try {
             val videoName = when (deviceType) {
-                DeviceType.BOAT_AIRDOPES_219 -> "opening.mp4"
+                DeviceType.BOAT_AIRDOPES_219 -> "images/opening.mp4"
                 DeviceType.ONEPLUS -> "oneplus_nord_buds.mp4"
                 DeviceType.SONY,
                 DeviceType.DEFAULT,
@@ -485,10 +485,10 @@ class EarbudPopupService : Service() {
 
             video.visibility = View.VISIBLE
 
-            val videoFile = File(cacheDir, videoName)
+            val videoFile = File(cacheDir, videoName.substringAfterLast('/'))
 
             if (!videoFile.exists() || videoFile.length() == 0L) {
-                val tempFile = File(cacheDir, "${videoName}_temp")
+                val tempFile = File(cacheDir, "${videoFile.name}_temp")
 
                 assets.open(videoName).use { input ->
                     tempFile.outputStream().use { output ->
